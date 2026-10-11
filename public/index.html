@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TrendTrack Maurito</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22 fill=%22%237c5cff%22%3E%E2%96%B2%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="styles.css" />
+  <script src="vendor/marked.min.js"></script>
+  <script src="vendor/purify.min.js"></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand"><span class="logo">▲</span> TrendTrack <small>Maurito</small></div>
+    <nav>
+      <a href="#dashboard" data-view="dashboard">📊 Dashboard</a>
+      <a href="#stores" data-view="stores">🏬 Tiendas</a>
+      <a href="#products" data-view="products">🛍️ Productos</a>
+      <a href="#ads" data-view="ads">📣 Anuncios</a>
+      <a href="#alerts" data-view="alerts">🔔 Alertas</a>
+      <a href="#boards" data-view="boards">⭐ Tableros</a>
+      <a href="#ai" data-view="ai">✨ Claude IA</a>
+      <a href="#settings" data-view="settings">⚙️ Ajustes y MCP</a>
+    </nav>
+    <div class="usage-mini" id="usageMini"></div>
+  </aside>
+
+  <main>
+    <!-- DASHBOARD -->
+    <section id="view-dashboard" class="view">
+      <h1>Dashboard</h1>
+      <div class="kpis" id="kpis"></div>
+      <div class="grid2">
+        <div class="card">
+          <h3>Tiendas más activas</h3>
+          <div id="topLaunching"></div>
+        </div>
+        <div class="card">
+          <h3>Últimas alertas</h3>
+          <div id="dashEvents" class="event-list"></div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Productos lanzados esta semana</h3>
+        <div id="newProducts" class="product-grid small"></div>
+      </div>
+    </section>
+
+    <!-- TIENDAS -->
+    <section id="view-stores" class="view">
+      <h1>Tiendas</h1>
+      <form id="addStoreForm" class="toolbar">
+        <input name="domain" placeholder="Dominio de una tienda Shopify, ej: tienda.com" required />
+        <button class="primary">+ Rastrear tienda</button>
+        <button type="button" class="ghost" id="rescanAll">↻ Re-escanear todas</button>
+      </form>
+      <form id="storeFilters" class="toolbar wrap">
+        <input name="q" placeholder="Buscar por nombre, dominio, nicho…" />
+        <select name="niche"><option value="">Nicho</option></select>
+        <select name="country"><option value="">País</option></select>
+        <select name="theme"><option value="">Tema</option></select>
+        <select name="app"><option value="">App</option></select>
+        <select name="pixel"><option value="">Píxel</option></select>
+        <select name="sort">
+          <option value="added">Recién agregadas</option>
+          <option value="activity">Más activas</option>
+          <option value="launched">Más lanzamientos (30d)</option>
+          <option value="products">Más productos</option>
+          <option value="price">Precio medio más alto</option>
+          <option value="ads">Más anuncios activos</option>
+        </select>
+        <a class="button ghost" id="exportStores" href="/api/export/stores.csv">⬇ CSV</a>
+      </form>
+      <div id="storesTable"></div>
+    </section>
+
+    <!-- PRODUCTOS -->
+    <section id="view-products" class="view">
+      <h1>Productos</h1>
+      <form id="productFilters" class="toolbar wrap">
+        <input name="q" placeholder="Buscar productos (ej: posture corrector)" />
+        <select name="storeId"><option value="">Todas las tiendas</option></select>
+        <input name="minPrice" type="number" step="0.01" placeholder="Precio mín" class="short" />
+        <input name="maxPrice" type="number" step="0.01" placeholder="Precio máx" class="short" />
+        <select name="days">
+          <option value="">Cualquier fecha</option>
+          <option value="7">Lanzados últimos 7 días</option>
+          <option value="30">Últimos 30 días</option>
+          <option value="90">Últimos 90 días</option>
+        </select>
+        <select name="sort">
+          <option value="newest">Más nuevos</option>
+          <option value="bestseller">Más vendidos</option>
+          <option value="discount">Mayor descuento</option>
+          <option value="price_asc">Precio ↑</option>
+          <option value="price_desc">Precio ↓</option>
+        </select>
+        <button class="primary">Buscar</button>
+        <a class="button ghost" id="exportProducts" href="/api/export/products.csv">⬇ CSV</a>
+      </form>
+      <p class="muted" id="productCount"></p>
+      <div id="productGrid" class="product-grid"></div>
+      <div class="center"><button id="moreProducts" class="ghost hidden">Cargar más</button></div>
+    </section>
+
+    <!-- ANUNCIOS -->
+    <section id="view-ads" class="view">
+      <h1>Anuncios</h1>
+      <form id="adsForm" class="toolbar wrap">
+        <input name="term" placeholder="Producto, marca o dominio" required />
+        <select name="country">
+          <option value="ES">España</option><option value="FR">Francia</option><option value="DE">Alemania</option>
+          <option value="IT">Italia</option><option value="PT">Portugal</option><option value="NL">Países Bajos</option>
+          <option value="GB">Reino Unido</option>
+        </select>
+        <select name="minDays">
+          <option value="0">Cualquier antigüedad</option>
+          <option value="7">Activos +7 días</option>
+          <option value="30">Activos +30 días (ganadores)</option>
+          <option value="90">Activos +90 días</option>
+        </select>
+        <button class="primary">Buscar anuncios</button>
+      </form>
+      <div id="adsResult"><p class="muted">Busca un producto o marca. Los anuncios que llevan más días activos suelen ser los rentables.</p></div>
+    </section>
+
+    <!-- ALERTAS -->
+    <section id="view-alerts" class="view">
+      <h1>Alertas</h1>
+      <form id="alertFilters" class="toolbar">
+        <select name="type">
+          <option value="">Todas</option>
+          <option value="new_product">Productos nuevos</option>
+          <option value="price_change">Cambios de precio</option>
+          <option value="removed_product">Productos retirados</option>
+          <option value="new_ads">Nuevos anuncios</option>
+          <option value="store_added">Tiendas agregadas</option>
+        </select>
+      </form>
+      <div id="alertsList" class="event-list card"></div>
+    </section>
+
+    <!-- TABLEROS -->
+    <section id="view-boards" class="view">
+      <h1>Tableros</h1>
+      <form id="newBoardForm" class="toolbar">
+        <input name="boardName" placeholder="Nombre del tablero (ej: Ganadores mascotas)" required />
+        <button class="primary">+ Crear tablero</button>
+      </form>
+      <div id="boardsList" class="boards"></div>
+      <div id="boardDetail"></div>
+    </section>
+
+    <!-- CLAUDE IA -->
+    <section id="view-ai" class="view ai-view">
+      <div class="ai-sidebar">
+        <button class="primary block" id="newChat">+ Nueva investigación</button>
+        <div id="chatList"></div>
+      </div>
+      <div class="ai-main">
+        <div id="chatLog" class="chat-log"></div>
+        <div class="presets" id="presets"></div>
+        <form id="chatForm" class="chat-form">
+          <select name="mode" title="Tipo de búsqueda">
+            <option value="products">🔥 Productos ganadores</option>
+            <option value="stores">🏬 Encontrar tiendas</option>
+            <option value="analyze">🔎 Analizar tienda/producto</option>
+            <option value="ads">📣 Anuncios que funcionan</option>
+            <option value="free">💬 Libre</option>
+          </select>
+          <textarea name="prompt" rows="2" placeholder="Ej: productos ganadores de mascotas para vender en España este mes" required></textarea>
+          <button class="primary" id="sendBtn">Investigar</button>
+        </form>
+      </div>
+    </section>
+
+    <!-- AJUSTES -->
+    <section id="view-settings" class="view">
+      <h1>Ajustes y conexión con Claude</h1>
+      <div class="card">
+        <h3>🔌 Vincular con Claude por MCP</h3>
+        <p class="muted">Conecta TrendTrack a Claude como servidor MCP: Claude podrá rastrear tiendas, buscar productos y anuncios,
+          ver alertas y guardar en tableros desde Claude Desktop, Claude Code o claude.ai, usando tu plan de Claude.</p>
+        <div id="mcpInfo"></div>
+      </div>
+      <div class="card">
+        <h3>🔑 Claude dentro de la app (API key)</h3>
+        <p class="muted">La pestaña <b>Claude IA</b> usa tu API key y se descuenta de los créditos de tu cuenta en
+          <a href="https://platform.claude.com/settings/billing" target="_blank" rel="noopener">platform.claude.com</a>.
+          Crea una key en <a href="https://platform.claude.com/settings/keys" target="_blank" rel="noopener">Settings → API keys</a>.
+          Internamente, Claude usa las mismas herramientas del servidor MCP + búsqueda web.</p>
+        <form id="settingsForm" class="settings-form">
+          <label>API key <input name="apiKey" type="password" placeholder="sk-ant-..." autocomplete="off" /></label>
+          <p class="muted" id="keyStatus"></p>
+          <label>Modelo <select name="model"></select></label>
+          <label>Profundidad de investigación
+            <select name="effort">
+              <option value="low">Baja (rápida y barata)</option>
+              <option value="medium">Media (recomendada)</option>
+              <option value="high">Alta</option>
+              <option value="xhigh">Muy alta</option>
+              <option value="max">Máxima (más cara)</option>
+            </select>
+          </label>
+          <div class="row">
+            <button class="primary">Guardar</button>
+            <button type="button" class="ghost" id="testKey">Probar conexión</button>
+            <button type="button" class="ghost danger" id="removeKey">Quitar key</button>
+          </div>
+        </form>
+      </div>
+      <div class="card">
+        <h3>Consumo estimado de la API</h3>
+        <div id="usageDetail"></div>
+        <button class="ghost" id="resetUsage">Reiniciar contador</button>
+      </div>
+      <div class="card">
+        <h3>Meta Ad Library API</h3>
+        <p class="muted" id="metaStatus"></p>
+      </div>
+    </section>
+  </main>
+
+  <div id="modal" class="modal hidden"><div class="modal-body"><button class="close" id="closeModal">✕</button><div id="modalContent"></div></div></div>
+  <div id="toast" class="toast hidden"></div>
+  <script src="app.js"></script>
+</body>
+</html>
