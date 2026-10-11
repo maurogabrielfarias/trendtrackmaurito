@@ -2,7 +2,7 @@
 // (Claude Desktop, Claude Code o claude.ai como conector personalizado).
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { db, save } from "./db.js";
+import { getKv } from "./db.js";
 import {
   scanStore,
   markScanError,
@@ -12,8 +12,9 @@ import {
   getProduct,
   recentEvents,
   dashboardStats,
-  normalizeOrigin,
-  storeIdFromOrigin,
+  storeIdFrom,
+  getStore,
+  saveStore,
 } from "./shopify.js";
 import { adLibraryLinks, searchMetaAds, trackStoreAds } from "./ads.js";
 import { listBoards, addToBoard, getBoard } from "./boards.js";
@@ -60,13 +61,13 @@ function compactStore(s) {
   };
 }
 
-async function trackWithAds(domain) {
+export async function trackWithAds(domain) {
   try {
     const { store, scan } = await scanStore(domain);
     const ads = await trackStoreAds(store.id).catch(() => null);
     return { store: { ...compactStore(store), tech: store.tech, ads }, scan };
   } catch (err) {
-    markScanError(domain, err);
+    await markScanError(domain, err);
     throw err;
   }
 }
@@ -82,7 +83,7 @@ export function createMcpServer() {
       description: "Resumen general: tiendas rastreadas, productos, lanzamientos de la semana, anuncios activos, tiendas más activas y últimas alertas.",
       annotations: readOnly,
     },
-    async () => json(dashboardStats()),
+    async () => json(await dashboardStats(await getKv("usage", {}))),
   );
 
   server.registerTool(
@@ -106,7 +107,7 @@ export function createMcpServer() {
       annotations: readOnly,
     },
     async (a) => {
-      const list = searchStores({
+      const list = await searchStores({
         q: a.query,
         niche: a.niche,
         country: a.country,
@@ -117,7 +118,7 @@ export function createMcpServer() {
         minProducts: a.min_products,
         sort: a.sort,
       });
-      return json({ total: list.length, stores: list.slice(0, a.limit || 50).map(compactStore), filters: storeFacets() });
+      return json({ total: list.length, stores: list.slice(0, a.limit || 50).map(compactStore), filters: storeFacets(list) });
     },
   );
 
@@ -133,11 +134,11 @@ export function createMcpServer() {
     async ({ store }) => {
       let id;
       try {
-        id = storeIdFromOrigin(normalizeOrigin(store));
+        id = storeIdFrom(store);
       } catch {
         return fail("Dominio inválido");
       }
-      const s = db().stores[id];
+      const s = await getStore(id);
       if (!s) return fail(`La tienda ${id} no está rastreada. Usa track_store para agregarla.`);
       return json({
         ...compactStore(s),
@@ -146,11 +147,11 @@ export function createMcpServer() {
         tech: s.tech,
         ads: s.ads || null,
         scans: (s.scans || []).slice(-15),
-        newestProducts: searchProducts({ storeId: id, sort: "newest", limit: 25 }).products.map(compactProduct),
+        newestProducts: (await searchProducts({ storeId: id, sort: "newest", limit: 25 })).products.map(compactProduct),
         bestSellers: s.hasBestSellerRanking
-          ? searchProducts({ storeId: id, sort: "bestseller", limit: 25 }).products.map(compactProduct)
+          ? (await searchProducts({ storeId: id, sort: "bestseller", limit: 25 })).products.map(compactProduct)
           : "La tienda no expone su ranking de más vendidos",
-        recentEvents: recentEvents({ storeId: id, limit: 20 }),
+        recentEvents: await recentEvents({ storeId: id, limit: 20 }),
       });
     },
   );
@@ -182,11 +183,11 @@ export function createMcpServer() {
       annotations: { readOnlyHint: false, openWorldHint: false },
     },
     async ({ store, niche, notes }) => {
-      const s = db().stores[storeIdFromOrigin(normalizeOrigin(store))];
+      const s = await getStore(storeIdFrom(store));
       if (!s) return fail("Tienda no rastreada");
       if (niche !== undefined) s.niche = niche.slice(0, 200);
       if (notes !== undefined) s.notes = notes.slice(0, 2000);
-      save();
+      await saveStore(s);
       return json(compactStore(s));
     },
   );
@@ -211,9 +212,9 @@ export function createMcpServer() {
       annotations: readOnly,
     },
     async (a) => {
-      const r = searchProducts({
+      const r = await searchProducts({
         q: a.query,
-        storeId: a.store ? storeIdFromOrigin(normalizeOrigin(a.store)) : "",
+        storeId: a.store ? storeIdFrom(a.store) : "",
         minPrice: a.min_price,
         maxPrice: a.max_price,
         productType: a.product_type,
@@ -235,7 +236,7 @@ export function createMcpServer() {
       annotations: readOnly,
     },
     async ({ key }) => {
-      const p = getProduct(key);
+      const p = await getProduct(key);
       return p ? json(p) : fail("Producto no encontrado");
     },
   );
@@ -285,9 +286,9 @@ export function createMcpServer() {
     },
     async (a) =>
       json(
-        recentEvents({
+        await recentEvents({
           type: a.type,
-          storeId: a.store ? storeIdFromOrigin(normalizeOrigin(a.store)) : "",
+          storeId: a.store ? storeIdFrom(a.store) : "",
           limit: a.limit || 50,
         }),
       ),
@@ -296,7 +297,7 @@ export function createMcpServer() {
   server.registerTool(
     "list_boards",
     { title: "Tableros", description: "Lista los tableros de favoritos y, si se indica uno, su contenido.", inputSchema: { board_id: z.string().optional() }, annotations: readOnly },
-    async ({ board_id }) => (board_id ? json(getBoard(board_id) || "Tablero no encontrado") : json(listBoards().map((b) => ({ id: b.id, name: b.name, items: b.items.length })))),
+    async ({ board_id }) => (board_id ? json((await getBoard(board_id)) || "Tablero no encontrado") : json(await listBoards())),
   );
 
   server.registerTool(
@@ -313,10 +314,10 @@ export function createMcpServer() {
       annotations: { readOnlyHint: false, openWorldHint: false },
     },
     async ({ board, type, ref, note }) => {
-      const data = type === "product" ? getProduct(ref) : type === "store" ? db().stores[ref] : {};
+      if (type === "store") ref = storeIdFrom(ref);
+      const data = type === "product" ? await getProduct(ref) : type === "store" ? await getStore(ref) : {};
       if (type !== "ad" && !data) return fail(`No se encontró ${type} ${ref}`);
-      const b = addToBoard(board, { type, ref, note, data: { title: data?.title || data?.name || ref } });
-      return json({ id: b.id, name: b.name, items: b.items.length });
+      return json(await addToBoard(board, { type, ref, note, data: { title: data?.title || data?.name || ref } }));
     },
   );
 
@@ -368,4 +369,3 @@ Quiero: posicionamiento, productos estrella, estrategia de precios, tecnología 
   return server;
 }
 
-export { trackWithAds };

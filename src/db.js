@@ -1,84 +1,60 @@
-// Almacenamiento simple en un archivo JSON (sin base de datos externa).
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+// Acceso a Cloudflare D1. El Worker llama a bindEnv(env) al recibir cada petición.
+export let ENV = {};
+export function bindEnv(env) {
+  ENV = env;
+}
 
-// Ruta absoluta: el servidor MCP puede arrancar desde cualquier carpeta.
-export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const DATA_DIR = process.env.DATA_DIR || path.join(ROOT, "data");
-const DB_FILE = path.join(DATA_DIR, "db.json");
+const d1 = () => {
+  if (!ENV.DB) throw new Error("Falta la base de datos D1 (binding DB) en wrangler.jsonc");
+  return ENV.DB;
+};
 
-const EMPTY = () => ({
-  stores: {},
-  products: {},
-  conversations: {},
-  events: [],
-  boards: {},
-  settings: {},
-  usage: { requests: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, webSearches: 0, costUsd: 0 },
-});
+export async function all(sql, ...params) {
+  const { results } = await d1().prepare(sql).bind(...params).all();
+  return results;
+}
 
-let state = load();
-let saveTimer = null;
-let loadedMtime = mtime();
+export async function first(sql, ...params) {
+  return d1().prepare(sql).bind(...params).first();
+}
 
-function mtime() {
+export async function run(sql, ...params) {
+  return d1().prepare(sql).bind(...params).run();
+}
+
+export const stmt = (sql, ...params) => d1().prepare(sql).bind(...params);
+
+// Ejecuta muchas sentencias en lotes (más rápido y atómico por lote).
+export async function batch(statements, size = 80) {
+  for (let i = 0; i < statements.length; i += size) {
+    await d1().batch(statements.slice(i, i + size));
+  }
+}
+
+export const now = () => new Date().toISOString();
+export const parse = (s, fallback = null) => {
   try {
-    return fs.statSync(DB_FILE).mtimeMs;
+    return s == null ? fallback : JSON.parse(s);
   } catch {
-    return 0;
+    return fallback;
   }
+};
+
+// Pequeño almacén clave-valor (ajustes, consumo de la API).
+export async function getKv(key, fallback) {
+  const row = await first("SELECT value FROM kv WHERE key = ?", key);
+  return row ? { ...fallback, ...parse(row.value, {}) } : fallback;
 }
 
-function load() {
-  try {
-    const raw = fs.readFileSync(DB_FILE, "utf8");
-    return { ...EMPTY(), ...JSON.parse(raw) };
-  } catch {
-    return EMPTY();
-  }
+export async function setKv(key, value) {
+  await run(
+    "INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    key,
+    JSON.stringify(value),
+  );
 }
 
-// Si otro proceso (p. ej. el servidor MCP por stdio) escribió el archivo, se recarga.
-export function db() {
-  if (!saveTimer) {
-    const m = mtime();
-    if (m !== loadedMtime) {
-      state = load();
-      loadedMtime = m;
-    }
-  }
-  return state;
-}
-
-// Escritura atómica, agrupando cambios cercanos en el tiempo.
-export function save() {
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(flush, 100);
-}
-
-// Guarda solo si hay cambios pendientes (evita pisar lo que escribió otro proceso).
-export function flushPending() {
-  if (saveTimer) flush();
-}
-
-export function flush() {
-  clearTimeout(saveTimer);
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  const tmp = `${DB_FILE}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(state));
-  fs.renameSync(tmp, DB_FILE);
-  saveTimer = null;
-  loadedMtime = mtime();
-}
-
-// Registro de eventos para las alertas (nuevos productos, cambios de precio, etc.).
-export function addEvent(event) {
-  state.events.unshift({ at: new Date().toISOString(), ...event });
-  if (state.events.length > 2000) state.events.length = 2000;
-}
-
-export function reset() {
-  state = EMPTY();
-  flush();
+export function eventStmt(event) {
+  const { type, storeId = null, ...data } = event;
+  return stmt("INSERT INTO events (at, type, store_id, data) VALUES (?, ?, ?, ?)", now(), type, storeId, JSON.stringify(data));
 }

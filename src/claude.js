@@ -1,8 +1,7 @@
 // Investigación con Claude: búsqueda web + acceso a las tiendas/productos rastreados.
 // Usa tu API key de Anthropic, así que cada búsqueda consume los créditos de tu cuenta.
 import Anthropic from "@anthropic-ai/sdk";
-import crypto from "node:crypto";
-import { db, save } from "./db.js";
+import { ENV, all, first, run, now, parse, getKv, setKv } from "./db.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createMcpServer } from "./mcp.js";
@@ -15,29 +14,37 @@ export const DEFAULT_MODEL = "claude-opus-5-5";
 const WEB_SEARCH_COST = 10 / 1000; // USD por búsqueda
 const MAX_TURNS = 15;
 
-export function getSettings() {
-  const s = db().settings;
-  const apiKey = s.anthropicApiKey || process.env.ANTHROPIC_API_KEY || "";
-  const model = s.model || process.env.CLAUDE_MODEL || DEFAULT_MODEL;
+export const EMPTY_USAGE = { requests: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, webSearches: 0, costUsd: 0 };
+
+// La API key vive como secreto de Cloudflare (ANTHROPIC_API_KEY), nunca en la base de datos.
+export async function getSettings() {
+  const s = await getKv("settings", {});
+  const model = s.model || ENV.CLAUDE_MODEL || DEFAULT_MODEL;
   return {
-    apiKey,
+    hasApiKey: Boolean(ENV.ANTHROPIC_API_KEY),
     model: MODELS[model] ? model : DEFAULT_MODEL,
     effort: s.effort || "medium",
   };
 }
 
+export async function saveSettings({ model, effort }) {
+  const s = await getKv("settings", {});
+  if (MODELS[model]) s.model = model;
+  if (["low", "medium", "high", "xhigh", "max"].includes(effort)) s.effort = effort;
+  await setKv("settings", s);
+}
+
 function client() {
-  const { apiKey } = getSettings();
-  if (!apiKey) {
-    const err = new Error("Falta la API key de Anthropic. Agrégala en Ajustes o en el archivo .env");
+  if (!ENV.ANTHROPIC_API_KEY) {
+    const err = new Error("Falta la API key de Anthropic: guárdala como secreto ANTHROPIC_API_KEY en Cloudflare.");
     err.status = 400;
     throw err;
   }
-  return new Anthropic({ apiKey });
+  return new Anthropic({ apiKey: ENV.ANTHROPIC_API_KEY, ...(ENV.ANTHROPIC_BASE_URL ? { baseURL: ENV.ANTHROPIC_BASE_URL } : {}) });
 }
 
 export async function testApiKey() {
-  const { model } = getSettings();
+  const { model } = await getSettings();
   const info = await client().models.retrieve(model);
   return { ok: true, model: info.id, name: info.display_name };
 }
@@ -98,9 +105,9 @@ const SERVER_TOOLS = [
   { type: "web_fetch_20260209", name: "web_fetch", max_uses: 6 },
 ];
 
-function addUsage(model, usage) {
+async function addUsage(model, usage) {
   const price = MODELS[model] || MODELS[DEFAULT_MODEL];
-  const u = db().usage;
+  const u = await getKv("usage", EMPTY_USAGE);
   const input = usage.input_tokens || 0;
   const cacheWrite = usage.cache_creation_input_tokens || 0;
   const cacheRead = usage.cache_read_input_tokens || 0;
@@ -115,22 +122,26 @@ function addUsage(model, usage) {
   u.outputTokens += output;
   u.webSearches += searches;
   u.costUsd += cost;
-  save();
-  return { input: input + cacheWrite, cacheRead, output, searches, cost };
+  await setKv("usage", u);
+  return { usage: { input: input + cacheWrite, cacheRead, output, searches, cost }, total: u };
 }
 
-export function listConversations() {
-  return Object.values(db().conversations)
-    .map(({ id, title, mode, createdAt, updatedAt }) => ({ id, title, mode, createdAt, updatedAt }))
-    .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+export async function listConversations() {
+  const rows = await all("SELECT id, title, mode, created_at, updated_at FROM conversations ORDER BY updated_at DESC LIMIT 200");
+  return rows.map((r) => ({ id: r.id, title: r.title, mode: r.mode, createdAt: r.created_at, updatedAt: r.updated_at }));
+}
+
+async function loadMessages(id) {
+  const rows = await all("SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY seq", id);
+  return rows.map((r) => ({ role: r.role, content: parse(r.content) }));
 }
 
 // Vista simplificada de una conversación para la interfaz.
-export function getConversationView(id) {
-  const c = db().conversations[id];
+export async function getConversationView(id) {
+  const c = await first("SELECT * FROM conversations WHERE id = ?", id);
   if (!c) return null;
   const items = [];
-  for (const m of c.messages) {
+  for (const m of await loadMessages(id)) {
     if (m.role === "user") {
       if (typeof m.content === "string") items.push({ role: "user", text: m.content.replace(/^\[[^\]]*\]\n/, "") });
       continue;
@@ -150,9 +161,9 @@ export function getConversationView(id) {
   return { id: c.id, title: c.title, mode: c.mode, items };
 }
 
-export function deleteConversation(id) {
-  delete db().conversations[id];
-  save();
+export async function deleteConversation(id) {
+  await run("DELETE FROM messages WHERE conversation_id = ?", id);
+  await run("DELETE FROM conversations WHERE id = ?", id);
 }
 
 /**
@@ -161,24 +172,41 @@ export function deleteConversation(id) {
  */
 export async function research({ conversationId, prompt, mode = "free" }, emit, signal) {
   const anthropic = client();
-  const { model, effort } = getSettings();
+  const { model, effort } = await getSettings();
   const tools = await mcpBridge();
-  const state = db();
 
-  let convo = conversationId && state.conversations[conversationId];
+  let convo = conversationId ? await first("SELECT id, title FROM conversations WHERE id = ?", conversationId) : null;
   if (!convo) {
-    const now = new Date().toISOString();
-    convo = { id: crypto.randomUUID(), title: prompt.slice(0, 80), mode, createdAt: now, updatedAt: now, messages: [] };
-    state.conversations[convo.id] = convo;
+    convo = { id: crypto.randomUUID(), title: prompt.slice(0, 80) };
+    await run(
+      "INSERT INTO conversations (id, title, mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+      convo.id,
+      convo.title,
+      mode,
+      now(),
+      now(),
+    );
   }
   emit({ type: "conversation", id: convo.id, title: convo.title });
+
+  // El historial solo crece (nunca se edita): así la caché y los bloques de thinking siguen siendo válidos.
+  const messages = await loadMessages(convo.id);
+  const append = async (message) => {
+    messages.push(message);
+    await run(
+      "INSERT INTO messages (conversation_id, seq, role, content) VALUES (?, ?, ?, ?)",
+      convo.id,
+      messages.length,
+      message.role,
+      JSON.stringify(message.content),
+    );
+    await run("UPDATE conversations SET updated_at = ? WHERE id = ?", now(), convo.id);
+  };
 
   // La fecha y el modo van en el mensaje del usuario para no romper la caché del system prompt.
   const hint = MODE_HINTS[mode] || "";
   const header = `[Fecha: ${new Date().toISOString().slice(0, 10)}${hint ? ` | ${hint}` : ""}]\n`;
-  convo.messages.push({ role: "user", content: header + prompt });
-  convo.updatedAt = new Date().toISOString();
-  save();
+  await append({ role: "user", content: header + prompt });
 
   for (let turn = 0; turn < MAX_TURNS; turn++) {
     const stream = anthropic.beta.messages.stream(
@@ -190,7 +218,7 @@ export async function research({ conversationId, prompt, mode = "free" }, emit, 
         thinking: { type: "adaptive", display: "summarized" },
         output_config: { effort },
         tools: [...SERVER_TOOLS, ...tools.tools],
-        messages: convo.messages,
+        messages,
         // Si los filtros de seguridad rechazan la petición, el API la reintenta con otro modelo.
         fallbacks: "default",
         betas: ["server-side-fallback-2026-07-01"],
@@ -209,12 +237,11 @@ export async function research({ conversationId, prompt, mode = "free" }, emit, 
     });
 
     const message = await stream.finalMessage();
-    emit({ type: "usage", usage: addUsage(model, message.usage), total: db().usage });
+    const { usage, total } = await addUsage(model, message.usage);
+    emit({ type: "usage", usage, total });
 
     // Se guarda el contenido completo (incluidos bloques de thinking) sin modificar.
-    convo.messages.push({ role: "assistant", content: message.content });
-    convo.updatedAt = new Date().toISOString();
-    save();
+    await append({ role: "assistant", content: message.content });
 
     if (message.stop_reason === "refusal") {
       emit({ type: "error", message: "Claude no pudo responder a esta petición. Prueba a reformularla." });
@@ -238,8 +265,7 @@ export async function research({ conversationId, prompt, mode = "free" }, emit, 
         }
       }),
     );
-    convo.messages.push({ role: "user", content: results });
-    save();
+    await append({ role: "user", content: results });
   }
 
   emit({ type: "done", id: convo.id });

@@ -1,0 +1,5 @@
+# Copia este archivo como .dev.vars para probar en tu computadora con "npm run dev".
+APP_PASSWORD=cambia-esto
+MCP_TOKEN=cambia-esto-tambien
+ANTHROPIC_API_KEY=
+META_ACCESS_TOKEN=

@@ -236,8 +236,8 @@ $("#addStoreForm").addEventListener("submit", (e) => {
 
 $("#rescanAll").onclick = (e) =>
   busy(e.target, async () => {
-    await api("/api/stores-rescan", { method: "POST" });
-    toast("Todas las tiendas re-escaneadas");
+    const r = await api("/api/stores-rescan", { method: "POST" });
+    toast(`${r.scanned} tiendas re-escaneadas (las 5 más antiguas). El resto se actualiza solo cada día.`);
     loaders.stores();
   });
 
@@ -415,7 +415,7 @@ $("#adsForm").addEventListener("submit", (e) => {
       .join("")}</div></div>`;
     let body;
     if (!r.configured) {
-      body = `<p class="muted">Para ver los anuncios aquí mismo (ordenados por días activos), configura <code>META_ACCESS_TOKEN</code> en el archivo .env.
+      body = `<p class="muted">Para ver los anuncios aquí mismo (ordenados por días activos), guarda el secreto <code>META_ACCESS_TOKEN</code> en Cloudflare.
         Mientras tanto usa los enlaces de arriba, o pídele a Claude que los investigue.</p>`;
     } else if (r.error) {
       body = `<p class="danger">Meta API: ${esc(r.error)}</p>`;
@@ -450,7 +450,7 @@ $("#alertFilters").addEventListener("change", () => loaders.alerts());
 async function saveToBoard(type, ref, title, data = {}) {
   const boards = await api("/api/boards");
   openModal(`<h1>Guardar en tablero</h1><p>${esc(title)}</p>
-    <div class="boards">${boards.map((b) => `<div class="board" data-id="${esc(b.id)}"><b>${esc(b.name)}</b><div class="muted">${b.items.length} elementos</div></div>`).join("")}</div>
+    <div class="boards">${boards.map((b) => `<div class="board" data-id="${esc(b.id)}"><b>${esc(b.name)}</b><div class="muted">${b.itemCount} elementos</div></div>`).join("")}</div>
     <form id="quickBoard" class="toolbar"><input name="boardName" placeholder="O crea uno nuevo…" required><button class="primary">Crear y guardar</button></form>`);
   const save = async (boardId) => {
     await api(`/api/boards/${encodeURIComponent(boardId)}/items`, { method: "POST", body: { type, ref, data: { title, ...data } } });
@@ -469,7 +469,7 @@ let activeBoard = null;
 loaders.boards = async () => {
   const boards = await api("/api/boards");
   $("#boardsList").innerHTML =
-    boards.map((b) => `<div class="board ${b.id === activeBoard ? "active" : ""}" data-id="${esc(b.id)}"><b>${esc(b.name)}</b><div class="muted">${b.items.length} elementos</div></div>`).join("") ||
+    boards.map((b) => `<div class="board ${b.id === activeBoard ? "active" : ""}" data-id="${esc(b.id)}"><b>${esc(b.name)}</b><div class="muted">${b.itemCount} elementos</div></div>`).join("") ||
     `<p class="muted">Crea un tablero para guardar productos, tiendas y anuncios.</p>`;
   $$("#boardsList .board").forEach(
     (el) =>
@@ -702,7 +702,7 @@ loaders.ai = async () => {
   await loadChatList();
   if (!currentChat && !streaming) renderChat([]);
   const s = await api("/api/settings");
-  if (!s.hasApiKey) toast("Agrega tu API key de Anthropic en Ajustes para usar Claude dentro de la app (o conéctate por MCP).", true);
+  if (!s.hasApiKey) toast("Falta el secreto ANTHROPIC_API_KEY en Cloudflare para usar Claude dentro de la app (o conéctate por MCP).", true);
 };
 
 // ---------- Ajustes ----------
@@ -721,29 +721,27 @@ loaders.settings = async () => {
   f.model.innerHTML = s.models.map((m) => `<option value="${m.id}">${esc(m.label)} — $${m.input}/$${m.output} por millón de tokens</option>`).join("");
   f.model.value = s.model;
   f.effort.value = s.effort;
-  f.apiKey.value = "";
-  $("#keyStatus").textContent = s.hasApiKey ? `Key guardada: ${s.apiKeyPreview}` : "No hay API key configurada.";
+  $("#keyStatus").innerHTML = s.hasApiKey
+    ? "✅ API key configurada como secreto de Cloudflare."
+    : "⚠️ Falta la API key. Guárdala como secreto: <code>npx wrangler secret put ANTHROPIC_API_KEY</code>";
   const u = s.usage;
   $("#usageDetail").innerHTML = `<p>${u.requests} llamadas · ${u.inputTokens.toLocaleString("es")} tokens de entrada · ${u.cacheReadTokens.toLocaleString("es")} desde caché · ${u.outputTokens.toLocaleString("es")} de salida · ${u.webSearches} búsquedas web</p>
     <p><b>Coste estimado: ${money(u.costUsd, "USD")}</b> <span class="muted">(el valor exacto lo ves en la consola de Anthropic)</span></p>`;
   $("#metaStatus").innerHTML = s.metaConfigured
     ? "✅ Configurado: los anuncios se muestran dentro de la app y se cuentan los anuncios activos de cada tienda."
-    : 'No configurado. Agrega <code>META_ACCESS_TOKEN</code> al archivo .env (crea el token en <a href="https://www.facebook.com/ads/library/api" target="_blank" rel="noopener">facebook.com/ads/library/api</a>). Sin él, la app abre la Ad Library en el navegador.';
+    : 'No configurado. Guarda el secreto <code>META_ACCESS_TOKEN</code> en Cloudflare (crea el token en <a href="https://www.facebook.com/ads/library/api" target="_blank" rel="noopener">facebook.com/ads/library/api</a>). Sin él, la app abre la Ad Library en el navegador.';
 
-  const desktopConfig = JSON.stringify({ mcpServers: { trendtrack: { command: s.mcp.stdioCommand, args: s.mcp.stdioArgs } } }, null, 2);
-  const urlWithToken = s.mcp.tokenRequired ? `${s.mcp.httpUrl}?token=TU_MCP_TOKEN` : s.mcp.httpUrl;
-  $("#mcpInfo").innerHTML = `
-    <h3>Claude Desktop</h3>
-    <p class="muted">Ajustes → Desarrollador → Editar configuración (<code>claude_desktop_config.json</code>), pega esto y reinicia Claude Desktop:</p>
-    ${codeBlock(desktopConfig)}
+  const url = s.mcp.url;
+  $("#mcpInfo").innerHTML = s.mcp.configured
+    ? `
+    <p>URL del servidor MCP (reemplaza <code>TU_MCP_TOKEN</code> por el secreto que guardaste):</p>
+    ${codeBlock(`${url}?token=TU_MCP_TOKEN`)}
+    <h3>claude.ai y Claude Desktop</h3>
+    <p class="muted">Ajustes → Conectores → Añadir conector personalizado → pega la URL de arriba. Queda disponible en claude.ai, Claude Desktop y la app móvil de Claude.</p>
     <h3>Claude Code</h3>
-    ${codeBlock(`claude mcp add trendtrack -- ${s.mcp.stdioCommand} "${s.mcp.stdioArgs[0]}"`)}
-    <h3>claude.ai (conector personalizado, HTTP)</h3>
-    <p class="muted">Ajustes → Conectores → Añadir conector personalizado, con esta URL. Para claude.ai la app debe estar publicada en internet
-      (con HTTPS) o expuesta con un túnel (p. ej. <code>cloudflared tunnel --url http://localhost:3000</code>).
-      ${s.mcp.tokenRequired ? "" : "<br><b>⚠️ Antes de publicarla, define <code>MCP_TOKEN</code> y <code>APP_PASSWORD</code> en .env.</b>"}</p>
-    ${codeBlock(urlWithToken)}
-    <p class="muted">Herramientas: dashboard, search_stores, get_store, track_store, set_store_notes, search_products, get_product, search_ads, recent_alerts, list_boards, save_to_board. Prompts: productos_ganadores, analizar_tienda.</p>`;
+    ${codeBlock(`claude mcp add --transport http trendtrack ${url} --header "Authorization: Bearer TU_MCP_TOKEN"`)}
+    <p class="muted">Herramientas: dashboard, search_stores, get_store, track_store, set_store_notes, search_products, get_product, search_ads, recent_alerts, list_boards, save_to_board. Prompts: productos_ganadores, analizar_tienda.</p>`
+    : `<p>⚠️ El servidor MCP está desactivado. Guarda el secreto: <code>npx wrangler secret put MCP_TOKEN</code></p>`;
   $$("#mcpInfo .copy").forEach(
     (b) =>
       (b.onclick = async () => {
@@ -757,7 +755,7 @@ loaders.settings = async () => {
 $("#settingsForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   const f = e.target;
-  await api("/api/settings", { method: "POST", body: { apiKey: f.apiKey.value, model: f.model.value, effort: f.effort.value } });
+  await api("/api/settings", { method: "POST", body: { model: f.model.value, effort: f.effort.value } });
   toast("Ajustes guardados");
   loaders.settings();
 });
@@ -766,11 +764,6 @@ $("#testKey").onclick = (e) =>
     const r = await api("/api/settings/test", { method: "POST" });
     toast(`✅ Conectado con ${r.name || r.model}`);
   });
-$("#removeKey").onclick = async () => {
-  if (!confirm("¿Quitar la API key guardada?")) return;
-  await api("/api/settings", { method: "POST", body: { apiKey: null } });
-  loaders.settings();
-};
 $("#resetUsage").onclick = async () => {
   await api("/api/settings/reset-usage", { method: "POST" });
   loaders.settings();

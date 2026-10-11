@@ -9,8 +9,8 @@ function csv(rows, columns) {
   return "﻿" + [columns.map(([h]) => h).join(","), ...rows.map((r) => columns.map(([, f]) => esc(f(r))).join(","))].join("\n");
 }
 
-export function productsCsv(filters) {
-  const { products } = searchProducts({ ...filters, limit: 100000, offset: 0 });
+export async function productsCsv(filters) {
+  const { products } = await searchProducts({ ...filters, limit: 1000, offset: 0 });
   return csv(products, [
     ["Producto", (p) => p.title],
     ["Tienda", (p) => p.storeId],
@@ -28,8 +28,8 @@ export function productsCsv(filters) {
   ]);
 }
 
-export function storesCsv(filters) {
-  return csv(searchStores(filters), [
+export async function storesCsv(filters) {
+  return csv(await searchStores(filters), [
     ["Tienda", (s) => s.name],
     ["Dominio", (s) => s.id],
     ["Nicho", (s) => s.niche],

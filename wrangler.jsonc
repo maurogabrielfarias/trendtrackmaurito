@@ -1,0 +1,42 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "trendtrack-maurito",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // Interfaz web. El Worker se ejecuta primero para pedir la contraseña.
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+
+  // Base de datos. El database_id se completa al crearla con:
+  //   npx wrangler d1 create trendtrack
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "trendtrack",
+      "database_id": "REEMPLAZAR_CON_EL_ID_DE_D1",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  // Re-escaneo automático: cada 30 minutos revisa las tiendas que llevan más de RESCAN_HOURS sin escanear.
+  "triggers": { "crons": ["*/30 * * * *"] },
+
+  "vars": {
+    "RESCAN_HOURS": "24",
+    "RESCAN_BATCH": "2",
+    "META_ADS_COUNTRY": "ES"
+  },
+
+  "observability": { "enabled": true }
+
+  // Secretos (nunca en este archivo). Se guardan con:
+  //   npx wrangler secret put APP_PASSWORD
+  //   npx wrangler secret put MCP_TOKEN
+  //   npx wrangler secret put ANTHROPIC_API_KEY
+  //   npx wrangler secret put META_ACCESS_TOKEN   (opcional)
+}

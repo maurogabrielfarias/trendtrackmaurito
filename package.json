@@ -1,14 +1,13 @@
 {
   "name": "trendtrack-maurito",
   "version": "0.1.0",
-  "description": "Spy tool de e-commerce estilo TrendTrack: rastrea tiendas Shopify, productos y anuncios, con investigación potenciada por Claude.",
+  "description": "Spy tool de e-commerce estilo TrendTrack en Cloudflare Workers: rastrea tiendas Shopify, productos y anuncios, con servidor MCP para Claude.",
   "type": "module",
-  "main": "src/server.js",
+  "main": "src/worker.js",
   "scripts": {
-    "start": "node src/server.js",
-    "dev": "node --watch src/server.js",
-    "test": "node --test test/*.test.js",
-    "mcp": "node src/mcp-stdio.js"
+    "dev": "wrangler d1 migrations apply trendtrack --local && wrangler dev",
+    "deploy": "wrangler d1 migrations apply trendtrack --remote && wrangler deploy",
+    "test": "node --test test/*.test.js"
   },
   "engines": {
     "node": ">=20"
@@ -16,10 +15,10 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.133.0",
     "@modelcontextprotocol/sdk": "^1.32.1",
-    "dompurify": "^3.4.16",
-    "dotenv": "^16.4.5",
-    "express": "^5.1.0",
-    "marked": "^12.0.2",
+    "hono": "^4.13.13",
     "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "wrangler": "^4.149.0"
   }
 }

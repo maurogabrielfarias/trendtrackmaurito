@@ -1,5 +1,6 @@
 // Anuncios: enlaces directos a bibliotecas de anuncios + Meta Ad Library API opcional.
-import { db, save, addEvent } from "./db.js";
+import { ENV, eventStmt } from "./db.js";
+import { getStore, saveStore } from "./shopify.js";
 
 export function adLibraryLinks(term, country = "ALL") {
   const q = encodeURIComponent(term);
@@ -16,7 +17,7 @@ export function adLibraryLinks(term, country = "ALL") {
 
 // La API de Meta devuelve anuncios comerciales solo para países de la UE/UK.
 export async function searchMetaAds({ term, country = "ES", limit = 25 }) {
-  const token = process.env.META_ACCESS_TOKEN;
+  const token = ENV.META_ACCESS_TOKEN;
   if (!token) {
     return { configured: false, ads: [] };
   }
@@ -66,8 +67,8 @@ export async function searchMetaAds({ term, country = "ES", limit = 25 }) {
 }
 
 // Seguimiento de anuncios activos de una tienda rastreada (busca su dominio en la Ad Library).
-export async function trackStoreAds(storeId, country = process.env.META_ADS_COUNTRY || "ES") {
-  const store = db().stores[storeId];
+export async function trackStoreAds(storeId, country = ENV.META_ADS_COUNTRY || "ES") {
+  const store = await getStore(storeId);
   if (!store) throw new Error("Tienda no encontrada");
   const { configured, ads } = await searchMetaAds({ term: storeId, country, limit: 100 });
   if (!configured) return null;
@@ -82,8 +83,8 @@ export async function trackStoreAds(storeId, country = process.env.META_ADS_COUN
     history: [...(store.ads?.history || []), { at: now, active: ads.length }].slice(-90),
   };
   if (prev != null && ads.length > prev) {
-    addEvent({ type: "new_ads", storeId, title: store.name, from: prev, to: ads.length });
+    await eventStmt({ type: "new_ads", storeId, title: store.name, from: prev, to: ads.length }).run();
   }
-  save();
+  await saveStore(store);
   return store.ads;
 }

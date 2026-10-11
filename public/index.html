@@ -180,18 +180,18 @@
       <div class="card">
         <h3>🔌 Vincular con Claude por MCP</h3>
         <p class="muted">Conecta TrendTrack a Claude como servidor MCP: Claude podrá rastrear tiendas, buscar productos y anuncios,
-          ver alertas y guardar en tableros desde Claude Desktop, Claude Code o claude.ai, usando tu plan de Claude.</p>
+          ver alertas y guardar en tableros desde claude.ai, Claude Desktop, la app móvil o Claude Code, usando tu plan de Claude.</p>
         <div id="mcpInfo"></div>
       </div>
       <div class="card">
         <h3>🔑 Claude dentro de la app (API key)</h3>
         <p class="muted">La pestaña <b>Claude IA</b> usa tu API key y se descuenta de los créditos de tu cuenta en
           <a href="https://platform.claude.com/settings/billing" target="_blank" rel="noopener">platform.claude.com</a>.
-          Crea una key en <a href="https://platform.claude.com/settings/keys" target="_blank" rel="noopener">Settings → API keys</a>.
+          Crea una key en <a href="https://platform.claude.com/settings/keys" target="_blank" rel="noopener">Settings → API keys</a>
+          y guárdala como secreto de Cloudflare (nunca se guarda en la base de datos).
           Internamente, Claude usa las mismas herramientas del servidor MCP + búsqueda web.</p>
         <form id="settingsForm" class="settings-form">
-          <label>API key <input name="apiKey" type="password" placeholder="sk-ant-..." autocomplete="off" /></label>
-          <p class="muted" id="keyStatus"></p>
+          <p id="keyStatus"></p>
           <label>Modelo <select name="model"></select></label>
           <label>Profundidad de investigación
             <select name="effort">
@@ -205,7 +205,6 @@
           <div class="row">
             <button class="primary">Guardar</button>
             <button type="button" class="ghost" id="testKey">Probar conexión</button>
-            <button type="button" class="ghost danger" id="removeKey">Quitar key</button>
           </div>
         </form>
       </div>
